@@ -1,16 +1,19 @@
 package com.analyzer.runner;
 
-import java.io.File;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.io.InputStream;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.stereotype.Component;
 
+import com.analyzer.core.AnnotationKeyExtractor;
 import com.analyzer.core.ConfigFileLoader;
+
 
 @Component
 public class ConfigRunner implements CommandLineRunner {
@@ -20,44 +23,58 @@ public class ConfigRunner implements CommandLineRunner {
 
 	@Override
 	public void run(String... args) throws Exception {
-		// TODO Auto-generated method stub
-		String folderPath = "samples";
+		Map<String, Object> flattened=null;
+	    System.out.println("Scanning config files in resources...");
+	    
+	    PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
 
-        // Parse --path argument manually
-        for (String arg : args) {
-            if (arg.startsWith("--path=")) {
-                folderPath = arg.substring("--path=".length());
-                break;
-            }
-        }
+	    // Scan all .yml, .yaml, .properties files in resources
+	    Resource[] resources = resolver.getResources("classpath*:*.{properties,yml,yaml}");
 
-        Path basePath = Paths.get(folderPath);
-        if (!Files.exists(basePath) || !Files.isDirectory(basePath)) {
-            System.err.println("Invalid folder path: " + basePath);
-            return;
-        }
+	    for (Resource resource : resources) {
+	    	String filename = resource.getFilename().toLowerCase();
+	    	if (filename.startsWith("log4j") || filename.startsWith("module-info") || filename.equals("LICENSE-ClassGraph.txt")) {
+	    	    continue;
+	    	}
+	        if (!(filename.endsWith(".yml") || filename.endsWith(".yaml") || filename.endsWith(".properties"))) {
+	            continue; // skip unsupported files
+	        }
+	        System.out.println("\nAnalyzing: " + resource.getFilename());
+	        try {
+	            // If your ConfigFileLoader.load supports File
+	            if (resource.isFile()) {
+	                flattened = configFileLoader.load(resource.getFile());
+	                flattened.forEach((k, v) -> System.out.println(k + " = " + v));
+	            } else {
+	                // Fallback for resources inside JAR
+	                try (InputStream in = resource.getInputStream()) {
+	                	 flattened = configFileLoader.load(in, resource.getFilename());
+	                	flattened.forEach((k, v) -> System.out.println(k + " = " + v));
+	                }
+	                
+	            }
+	        } catch (Exception e) {
+	            System.err.println("Failed to process " + resource.getFilename() + ": " + e.getMessage());
+	        }
+	    }
 
-        System.out.println("Scanning config files in: " + basePath.toAbsolutePath());
+	    System.out.println("\nAnalysis complete.");
 
-        Files.walk(basePath)
-                .filter(Files::isRegularFile)
-                .filter(path -> {
-                    String name = path.getFileName().toString().toLowerCase();
-                    return name.endsWith(".yml") || name.endsWith(".yaml") || name.endsWith(".properties");
-                })
-                .forEach(path -> {
-                    File file = path.toFile();
-                    System.out.println("\n Analyzing: " + file.getName());
-                    try {
-                        Map<String, Object> flattened = configFileLoader.load(file);
-                        flattened.forEach((k, v) -> System.out.println(k + " = " + v));
-                    } catch (Exception e) {
-                        System.err.println("Failed to process " + file.getName() + ": " + e.getMessage());
-                    }
-                });
+	    AnnotationKeyExtractor extractor = new AnnotationKeyExtractor();
+	    Set<String> usedKeys = extractor.extractKeys("com.analyzer.model");
 
-        System.out.println("\n Analysis complete.");
-
+	    System.out.println("=== Referenced Keys ===");
+	    usedKeys.forEach(System.out::println);
+	    
+	    Set<String> deadKeys = new HashSet<>(flattened.keySet());
+	    deadKeys.removeAll(usedKeys);
+	    
+	    if (deadKeys.isEmpty()) {
+	        System.out.println("No dead config keys found.");
+	    } else {
+	        System.out.println("=== Dead / Unused Config Keys ===");
+	        deadKeys.forEach(System.out::println);
+	    }
 	}
 
 }
