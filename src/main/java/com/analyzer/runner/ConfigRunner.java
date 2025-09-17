@@ -13,6 +13,8 @@ import org.springframework.stereotype.Component;
 
 import com.analyzer.core.AnnotationKeyExtractor;
 import com.analyzer.core.ConfigFileLoader;
+import com.analyzer.util.SpringMetadataLoader;
+import com.analyzer.util.StringUtils;
 
 
 @Component
@@ -66,6 +68,9 @@ public class ConfigRunner implements CommandLineRunner {
 	    System.out.println("=== Referenced Keys ===");
 	    usedKeys.forEach(System.out::println);
 	    
+	    System.out.println();
+	    
+	    //1. Feature 1 (Detect dead configs)
 	    Set<String> deadKeys = new HashSet<>(flattened.keySet());
 	    deadKeys.removeAll(usedKeys);
 	    
@@ -75,6 +80,37 @@ public class ConfigRunner implements CommandLineRunner {
 	        System.out.println("=== Dead / Unused Config Keys ===");
 	        deadKeys.forEach(System.out::println);
 	    }
+	    
+	    System.out.println();
+	    Set<String> validKeys = new HashSet<>();
+	    validKeys.addAll(SpringMetadataLoader.loadValidKeys()); // Spring Boot keys
+	    validKeys.addAll(usedKeys);
+	  
+	    System.out.println("Loaded " + validKeys.size() + " Spring Boot property keys");
+	    
+	    for (String key : flattened.keySet()) {
+	        if (!validKeys.contains(key)) {
+	            System.out.print("Invalid property: " + key);
+	            // Find closest match
+	            String suggestion = null;
+	            int bestDistance = Integer.MAX_VALUE;
+
+	            for (String valid : validKeys) {
+	                int dist = StringUtils.levenshteinDistance(key, valid);
+	                if (dist < bestDistance) {
+	                    bestDistance = dist;
+	                    suggestion = valid;
+	                }
+	            }
+
+	            if (bestDistance <= 3) { // threshold
+	                System.out.println("Did you mean: " + suggestion + "?");
+	            } else {
+	                System.out.println();
+	            }
+	        }
+	    }
+
 	}
 
 }
